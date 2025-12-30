@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conversor Turbo Online</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/coi-serviceworker@0.1.7/coi-serviceworker.min.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&display=swap');
+        :root { --primary: #6366f1; --bg: #0f172a; --card: rgba(30, 41, 59, 0.8); }
+        body { background: var(--bg); color: white; font-family: 'Plus Jakarta Sans', sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; padding: 20px; }
+        .card { background: var(--card); backdrop-filter: blur(12px); padding: 30px; border-radius: 24px; width: 100%; max-width: 400px; border: 1px solid rgba(255,255,255,0.1); text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,0.3); }
+        .drop-zone { border: 2px dashed #475569; padding: 30px; border-radius: 16px; margin: 20px 0; cursor: pointer; transition: 0.3s; }
+        .drop-zone:hover { border-color: var(--primary); background: rgba(99, 102, 241, 0.05); }
+        select, button { width: 100%; padding: 14px; border-radius: 12px; border: none; margin-top: 10px; font-size: 16px; outline: none; }
+        select { background: #1e293b; color: white; border: 1px solid #334155; }
+        button { background: var(--primary); color: white; font-weight: 700; cursor: pointer; transition: 0.3s; margin-top: 20px; }
+        button:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(99, 102, 241, 0.3); }
+        button:disabled { background: #475569; cursor: wait; }
+        .btn-clear { background: transparent; border: 1px solid #475569; color: #94a3b8; margin-top: 10px; display: none; }
+        .btn-clear:hover { background: rgba(255,255,255,0.05); color: white; }
+        .progress-container { height: 8px; background: #334155; border-radius: 10px; margin-top: 25px; overflow: hidden; display: none; }
+        #progress { width: 0%; height: 100%; background: var(--primary); transition: 0.3s; }
+        #status { font-size: 14px; color: #94a3b8; margin-top: 15px; font-weight: 500; }
+        .download-btn { display: block; margin-top: 20px; background: #10b981; color: white; text-decoration: none; padding: 14px; border-radius: 12px; font-weight: 700; animation: fadeIn 0.4s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2 style="margin: 0;">Conversor Turbo</h2>
+    <p style="color: #94a3b8; font-size: 0.85rem;">Processamento seguro no seu navegador</p>
+    
+    <div class="drop-zone" id="dropZone" onclick="document.getElementById('videoInput').click()">
+        <span id="fileName">📁 Selecionar Vídeo</span>
+        <input type="file" id="videoInput" hidden accept="video/*">
+    </div>
+
+    <select id="formatSelect">
+        <optgroup label="Áudio">
+            <option value="mp3">Extrair MP3</option>
+            <option value="wav">Extrair WAV</option>
+        </optgroup>
+        <optgroup label="Vídeo (Reduzir Tamanho)">
+            <option value="480p">MP4 - 480p (Pequeno)</option>
+            <option value="720p" selected>MP4 - 720p (HD Otimizado)</option>
+        </optgroup>
+    </select>
+
+    <button id="convertBtn">Converter Agora</button>
+    <button id="clearBtn" class="btn-clear">Novo Vídeo</button>
+
+    <div class="progress-container" id="progBar">
+        <div id="progress"></div>
+    </div>
+    <div id="status">Pronto para começar</div>
+</div>
+
+<script>
+    const { createFFmpeg, fetchFile } = FFmpeg;
+    const ffmpeg = createFFmpeg({ 
+        log: true,
+        corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js'
+    });
+
+    const btn = document.getElementById('convertBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const input = document.getElementById('videoInput');
+    const status = document.getElementById('status');
+    const progress = document.getElementById('progress');
+    const progBar = document.getElementById('progBar');
+    const fileNameSpan = document.getElementById('fileName');
+
+    input.onchange = () => { 
+        if(input.files[0]) {
+            fileNameSpan.innerText = input.files[0].name;
+            clearBtn.style.display = 'block';
+        }
+    };
+
+    // Função para Limpar
+    clearBtn.onclick = () => {
+        input.value = "";
+        fileNameSpan.innerText = "📁 Selecionar Vídeo";
+        status.innerHTML = "Pronto para começar";
+        progBar.style.display = 'none';
+        progress.style.width = '0%';
+        clearBtn.style.display = 'none';
+        btn.disabled = false;
+    };
+
+    btn.onclick = async () => {
+        if (!input.files[0]) return alert("Selecione um vídeo!");
+        btn.disabled = true;
+        progBar.style.display = 'block';
+
+        try {
+            if (!ffmpeg.isLoaded()) {
+                status.innerText = "Inicializando motor... (Aguarde)";
+                await ffmpeg.load();
+            }
+
+            status.innerText = "Lendo arquivo...";
+            ffmpeg.FS('writeFile', 'input_file', await fetchFile(input.files[0]));
+
+            const format = document.getElementById('formatSelect').value;
+            let args = [];
+            let outName = "convertido_" + Date.now();
+
+            if (format === 'mp3') {
+                args = ['-i', 'input_file', '-vn', '-ab', '192k', 'output.mp3'];
+                outName += ".mp3";
+            } else if (format === 'wav') {
+                args = ['-i', 'input_file', '-vn', 'output.wav'];
+                outName += ".wav";
+            } else {
+                const res = format === '480p' ? '854x480' : '1280x720';
+                args = ['-i', 'input_file', '-vcodec', 'libx264', '-crf', '28', '-s', res, '-pix_fmt', 'yuv420p', 'output.mp4'];
+                outName += ".mp4";
+            }
+
+            ffmpeg.setProgress(({ ratio }) => {
+                const perc = (ratio * 100).toFixed(0);
+                progress.style.width = perc + "%";
+                status.innerText = `Processando: ${perc}%`;
+            });
+
+            await ffmpeg.run(...args);
+
+            const data = ffmpeg.FS('readFile', args[args.length - 1]);
+            const type = format.includes('p') ? 'video/mp4' : 'audio/mpeg';
+            const url = URL.createObjectURL(new Blob([data.buffer], { type }));
+
+            status.innerHTML = `<a href="${url}" download="${outName}" class="download-btn">⬇️ Baixar Arquivo</a>`;
+        } catch (e) {
+            status.innerText = "Erro. Tente novamente.";
+            btn.disabled = false;
+        }
+    };
+</script>
+</body>
+</html>
